@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>母雞帶小雞 — 貪食蛇</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #f5f2e8;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 16px;
+    color: #222;
+  }
+  h1 { font-size: 22px; font-weight: 500; margin-bottom: 8px; color: #333; }
+  #hud {
+    display: flex;
+    gap: 20px;
+    font-size: 13px;
+    color: #666;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 8px;
+  }
+  #hud b { color: #222; }
+  #canvas {
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    display: block;
+    background: #f0ede0;
+  }
+  #msg {
+    font-size: 16px;
+    font-weight: 500;
+    color: #333;
+    min-height: 26px;
+    text-align: center;
+    margin: 6px 0;
+  }
+  .btn-row { display: flex; gap: 8px; margin-bottom: 8px; }
+  button {
+    font-size: 13px;
+    padding: 7px 18px;
+    border: 1px solid #bbb;
+    border-radius: 8px;
+    background: #fff;
+    color: #222;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover { background: #f0ede0; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  #dp {
+    display: grid;
+    grid-template-columns: repeat(3, 44px);
+    grid-template-rows: repeat(2, 44px);
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+  #dp button { width: 44px; height: 44px; font-size: 18px; padding: 0; display: flex; align-items: center; justify-content: center; }
+  #legend {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+    font-size: 12px;
+    color: #666;
+    max-width: 500px;
+    margin-top: 4px;
+  }
+  .leg { display: flex; align-items: center; gap: 4px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+  #tip { font-size: 12px; color: #999; margin-top: 4px; }
+</style>
+</head>
+<body>
+<h1>🐔 母雞帶小雞</h1>
+<div id="hud">
+  關卡：<b id="hLv">1</b>
+  &nbsp;分數：<b id="hSc">0</b>
+  &nbsp;最高：<b id="hBest">0</b>
+  &nbsp;小雞數：<b id="hLen">0</b>
+  &nbsp;下關需：<b id="hNext">10</b>分
+</div>
+<canvas id="canvas"></canvas>
+<div id="msg">按開始來玩！</div>
+<div class="btn-row">
+  <button id="sBtn">開始</button>
+  <button id="pBtn" disabled>暫停</button>
+</div>
+<div id="dp">
+  <div></div><button id="u">▲</button><div></div>
+  <button id="l">◄</button><button id="d">▼</button><button id="r">►</button>
+</div>
+<div id="legend"></div>
+<div id="tip">鍵盤方向鍵或點按鈕控制方向</div>
+
+<script>
+// =============================================
+//  母雞帶小雞 — 貪食蛇遊戲
+//  完整獨立版本
+// =============================================
+
+const C = document.getElementById('canvas');
+const ctx = C.getContext('2d');
+
+// ---- 關卡設定 ----
+const LEVELS = [
+  { cols: 15, rows: 15, cell: 22, enemyTypes: ['fox'],                         nextScore: 10,  speed: 180 },
+  { cols: 18, rows: 18, cell: 20, enemyTypes: ['fox', 'bear'],                  nextScore: 25,  speed: 155 },
+  { cols: 22, rows: 22, cell: 18, enemyTypes: ['fox', 'bear', 'wolf'],          nextScore: 45,  speed: 130 },
+  { cols: 26, rows: 26, cell: 16, enemyTypes: ['fox', 'bear', 'wolf', 'eagle'], nextScore: 70,  speed: 110 },
+  { cols: 30, rows: 30, cell: 14, enemyTypes: ['fox', 'bear', 'wolf', 'eagle', 'snake'], nextScore: 999, speed: 90 },
+];
+
+// ---- 蟲種設定 ----
+// speedMult: 吃到後的速度倍率（越小越快，代表長得快）
+const WORM_TYPES = [
+  { name: '紅毛蟲', color: '#e03030', score: 1, speedMult: 1.0  },
+  { name: '胖蚯蚓', color: '#8B4513', score: 2, speedMult: 0.75 },
+  { name: '金甲蟲', color: '#d4a017', score: 3, speedMult: 0.6  },
+  { name: '藍蜻蜓', color: '#3070e0', score: 5, speedMult: 0.45 },
+];
+
+// ---- 天敵設定 ----
+const ENEMY_CFG = {
+  fox:   { color: '#e06820', eyeC: '#fff',    label: '狐狸', size: 0.75, speed: 0.8  },
+  bear:  { color: '#7a4520', eyeC: '#ffe0a0', label: '熊',   size: 0.90, speed: 0.5  },
+  wolf:  { color: '#556070', eyeC: '#e0e8ff', label: '狼',   size: 0.80, speed: 1.1  },
+  eagle: { color: '#505050', eyeC: '#ffee00', label: '老鷹', size: 0.70, speed: 1.3  },
+  snake: { color: '#3a7a30', eyeC: '#fff',    label: '蛇',   size: 0.65, speed: 1.5  },
+};
+
+// ---- 遊戲狀態 ----
+let lv, COLS, ROWS, CELL, levelCfg;
+let hen, dir, nextDir, worms, enemies;
+let score, best = 0;
+let running = false, paused = false;
+let tickBase, enemyTick, spawnTick;
+let lastT = 0, accumulator = 0;
+let rafId = null;
+
+// ---- 輔助函式 ----
+function lcfg() { return LEVELS[Math.min(lv - 1, LEVELS.length - 1)]; }
+
+function resize() {
+  const cfg = lcfg();
+  COLS = cfg.cols; ROWS = cfg.rows; CELL = cfg.cell;
+  C.width  = COLS * CELL;
+  C.height = ROWS * CELL;
+}
+
+function rnd(max) { return Math.floor(Math.random() * max); }
+
+// ---- 初始化 ----
+function initGame(newLv = 1) {
+  lv = newLv;
+  resize();
+  levelCfg = lcfg();
+  const mx = Math.floor(COLS / 2), my = Math.floor(ROWS / 2);
+  hen = [{ x: mx, y: my }, { x: mx - 1, y: my }, { x: mx - 2, y: my }];
+  dir = { x: 1, y: 0 };
+  nextDir = { x: 1, y: 0 };
+  worms = [];
+  enemies = [];
+  score = 0;
+  tickBase = levelCfg.speed;
+  enemyTick = 0;
+  spawnTick = 0;
+  for (let i = 0; i < 3; i++) placeWorm();
+  updateHUD();
+}
+
+function placeWorm() {
+  let pos, tries = 0;
+  do {
+    pos = { x: rnd(COLS), y: rnd(ROWS) };
+    tries++;
+  } while (
+    tries < 200 && (
+      hen.some(s => s.x === pos.x && s.y === pos.y) ||
+      worms.some(w => w.x === pos.x && w.y === pos.y) ||
+      enemies.some(e => Math.abs(e.x - pos.x) < 2 && Math.abs(e.y - pos.y) < 2)
+    )
+  );
+  const t = WORM_TYPES[rnd(WORM_TYPES.length)];
+  worms.push({ ...pos, type: t, anim: Math.random() * Math.PI * 2 });
+}
+
+function spawnEnemy() {
+  const types = levelCfg.enemyTypes;
+  const type  = types[rnd(types.length)];
+  const cfg   = ENEMY_CFG[type];
+  let x, y;
+  if (Math.random() < 0.5) { x = Math.random() < 0.5 ? 0 : COLS - 1; y = rnd(ROWS); }
+  else                      { y = Math.random() < 0.5 ? 0 : ROWS - 1; x = rnd(COLS); }
+  enemies.push({
+    type, x, y, cfg,
+    moveTick:     0,
+    moveInterval: Math.max(1, Math.floor(3 / cfg.speed)),
+  });
+}
+
+function moveEnemy(e) {
+  const dx = hen[0].x - e.x;
+  const dy = hen[0].y - e.y;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    const nx = e.x + Math.sign(dx);
+    if (nx >= 0 && nx < COLS) e.x = nx;
+    else { const ny = e.y + Math.sign(dy); if (ny >= 0 && ny < ROWS) e.y = ny; }
+  } else {
+    const ny = e.y + Math.sign(dy);
+    if (ny >= 0 && ny < ROWS) e.y = ny;
+    else { const nx = e.x + Math.sign(dx); if (nx >= 0 && nx < COLS) e.x = nx; }
+  }
+}
+
+// ---- 遊戲主邏輯 ----
+function step() {
+  dir = { ...nextDir };
+  const head = { x: hen[0].x + dir.x, y: hen[0].y + dir.y };
+
+  if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) { gameOver('撞牆了！'); return; }
+  if (hen.slice(1).some(s => s.x === head.x && s.y === head.y))      { gameOver('咬到自己了！'); return; }
+  if (enemies.some(e => e.x === head.x && e.y === head.y))           { gameOver('被天敵抓走了！'); return; }
+
+  hen.unshift(head);
+
+  let ate = false;
+  for (let i = worms.length - 1; i >= 0; i--) {
+    const w = worms[i];
+    if (w.x === head.x && w.y === head.y) {
+      score += w.type.score;
+      if (score > best) best = score;
+      tickBase = Math.max(60, lcfg().speed * w.type.speedMult);
+      worms.splice(i, 1);
+      placeWorm();
+      ate = true;
+      break;
+    }
+  }
+  if (!ate) hen.pop();
+
+  // 移動天敵
+  enemyTick++;
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    e.moveTick++;
+    if (e.moveTick >= e.moveInterval) {
+      e.moveTick = 0;
+      moveEnemy(e);
+      if (e.x === hen[0].x && e.y === hen[0].y) { gameOver('被天敵抓走了！'); return; }
+    }
+  }
+
+  // 生成天敵
+  spawnTick++;
+  const spawnEvery = Math.max(30, 80 - lv * 10);
+  if (spawnTick >= spawnEvery && enemies.length < lv + 2) {
+    spawnEnemy();
+    spawnTick = 0;
+  }
+
+  // 升關
+  if (score >= levelCfg.nextScore && lv < LEVELS.length) {
+    lv++;
+    resize();
+    levelCfg = lcfg();
+    tickBase  = levelCfg.speed;
+    enemies   = [];
+    setMsg(`升到第 ${lv} 關！地圖變大，天敵增加！`);
+    setTimeout(() => { if (running) setMsg(''); }, 2000);
+  }
+
+  updateHUD();
+}
+
+function gameOver(reason) {
+  running = false;
+  setMsg(`遊戲結束！${reason} 得了 ${score} 分`);
+  document.getElementById('pBtn').disabled = true;
+}
+
+// ---- 主迴圈 ----
+function gameLoop(t) {
+  if (!running || paused) { lastT = t; rafId = requestAnimationFrame(gameLoop); return; }
+  const dt = t - lastT; lastT = t;
+  accumulator += dt;
+  if (accumulator >= tickBase) {
+    accumulator -= tickBase;
+    step();
+  }
+  draw(t);
+  rafId = requestAnimationFrame(gameLoop);
+}
+
+// =============================================
+//  繪圖函式
+// =============================================
+
+function drawBg() {
+  ctx.fillStyle = '#f0ede0';
+  ctx.fillRect(0, 0, C.width, C.height);
+  ctx.strokeStyle = '#e0dcc8';
+  ctx.lineWidth = 0.3;
+  for (let i = 0; i <= COLS; i++) {
+    ctx.beginPath(); ctx.moveTo(i * CELL, 0); ctx.lineTo(i * CELL, C.height); ctx.stroke();
+  }
+  for (let j = 0; j <= ROWS; j++) {
+    ctx.beginPath(); ctx.moveTo(0, j * CELL); ctx.lineTo(C.width, j * CELL); ctx.stroke();
+  }
+}
+
+function rr(x, y, w, h, r, fill) {
+  ctx.fillStyle = fill;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.fill();
+}
+
+// 母雞（頭部）
+function drawHen(seg, dx, dy) {
+  const px = seg.x * CELL, py = seg.y * CELL, s = CELL;
+  rr(px + 1, py + 1, s - 2, s - 2, 5, '#c87820');
+  rr(px + 3, py + 4, s - 6, s - 7, 4, '#e09830');
+
+  // 雞冠（三顆紅圓）
+  ctx.fillStyle = '#d02020';
+  if      (dy < 0) { for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(px + 5 + i * 4, py + 2,   2.5, 0, Math.PI * 2); ctx.fill(); } }
+  else if (dy > 0) { for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(px + 5 + i * 4, py + s - 2, 2.5, 0, Math.PI * 2); ctx.fill(); } }
+  else if (dx > 0) { for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(px + s - 2, py + 4 + i * 4, 2.5, 0, Math.PI * 2); ctx.fill(); } }
+  else             { for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(px + 2,     py + 4 + i * 4, 2.5, 0, Math.PI * 2); ctx.fill(); } }
+
+  // 垂肉
+  ctx.fillStyle = '#e03030';
+  if      (dx > 0) rr(px + s - 4, py + s / 2 + 1, 4, 5, 2, '#e03030');
+  else if (dx < 0) rr(px,         py + s / 2 + 1, 4, 5, 2, '#e03030');
+  else if (dy > 0) rr(px + s / 2 - 2, py + 2,     5, 4, 2, '#e03030');
+  else             rr(px + s / 2 - 2, py + s - 6, 5, 4, 2, '#e03030');
+
+  // 嘴巴
+  ctx.fillStyle = '#d09030';
+  if      (dx > 0) { ctx.beginPath(); ctx.moveTo(px + s - 2, py + s / 2 - 2); ctx.lineTo(px + s + 4, py + s / 2); ctx.lineTo(px + s - 2, py + s / 2 + 2); ctx.fill(); }
+  else if (dx < 0) { ctx.beginPath(); ctx.moveTo(px + 2,     py + s / 2 - 2); ctx.lineTo(px - 4,     py + s / 2); ctx.lineTo(px + 2,     py + s / 2 + 2); ctx.fill(); }
+  else if (dy > 0) { ctx.beginPath(); ctx.moveTo(px + s / 2 - 2, py + 2);     ctx.lineTo(px + s / 2,     py - 4); ctx.lineTo(px + s / 2 + 2, py + 2);     ctx.fill(); }
+  else             { ctx.beginPath(); ctx.moveTo(px + s / 2 - 2, py + s - 2); ctx.lineTo(px + s / 2,     py + s + 4); ctx.lineTo(px + s / 2 + 2, py + s - 2); ctx.fill(); }
+
+  // 眼睛
+  let ex = px + s / 2, ey = py + s / 2;
+  if      (dx > 0) { ex = px + s - 5; ey = py + 5;     }
+  else if (dx < 0) { ex = px + 5;     ey = py + 5;     }
+  else if (dy > 0) { ex = px + 4;     ey = py + 5;     }
+  else             { ex = px + 4;     ey = py + s - 5; }
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ex, ey, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(ex + dx * 0.7, ey + dy * 0.7, 1.7, 0, Math.PI * 2); ctx.fill();
+}
+
+// 小雞（身體節）
+function drawChick(seg) {
+  const px = seg.x * CELL, py = seg.y * CELL, s = CELL, p = 3;
+  rr(px + p, py + p, s - p * 2, s - p * 2, 4, '#f5c030');
+  ctx.fillStyle = '#f8d870';
+  ctx.beginPath(); ctx.ellipse(px + p + 1, py + s / 2, 2, 3, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(px + s - p - 1, py + s / 2, 2, 3, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#333';
+  ctx.beginPath(); ctx.arc(px + s / 2 - 1, py + s / 2 - 1, 1.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#d09030';
+  ctx.beginPath(); ctx.moveTo(px + s / 2, py + s / 2 + 1); ctx.lineTo(px + s / 2 - 2, py + s / 2 + 4); ctx.lineTo(px + s / 2 + 2, py + s / 2 + 4); ctx.fill();
+}
+
+// 蟲蟲
+function drawWorm(w, t) {
+  const px = w.x * CELL + CELL / 2, py = w.y * CELL + CELL / 2;
+  const wt = w.type, s = CELL * 0.4;
+  w.anim = (w.anim || 0) + 0.05;
+  const wave = Math.sin(w.anim) * 2;
+  ctx.save(); ctx.translate(px, py + wave);
+
+  if (wt.name === '紅毛蟲') {
+    ctx.fillStyle = wt.color;
+    for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.arc(-s * 1.2 + i * s * 0.8, 0, s * 0.5, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(s * 1.1, 0, s * 0.35, 0, Math.PI * 2); ctx.fill();
+  } else if (wt.name === '胖蚯蚓') {
+    ctx.fillStyle = wt.color;
+    ctx.beginPath(); ctx.ellipse(0, 0, s * 1.4, s * 0.6, 0.3, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#a0522d'; ctx.beginPath(); ctx.arc(-s * 1.2, 0, s * 0.4, 0, Math.PI * 2); ctx.fill();
+  } else if (wt.name === '金甲蟲') {
+    ctx.fillStyle = wt.color;
+    ctx.beginPath(); ctx.ellipse(0, 0, s, s * 0.75, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#a07000'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(0, -s * 0.75); ctx.lineTo(0, s * 0.75); ctx.stroke();
+    ctx.fillStyle = '#333'; ctx.beginPath(); ctx.arc(s * 0.9, 0, s * 0.35, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(s * 0.8, -s * 0.2); ctx.lineTo(s * 1.4, -s * 0.7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(s * 0.8,  s * 0.2); ctx.lineTo(s * 1.4,  s * 0.7); ctx.stroke();
+  } else {
+    // 藍蜻蜓
+    ctx.fillStyle = wt.color;
+    ctx.beginPath(); ctx.ellipse(0, 0, s * 0.4, s * 0.8, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#60a8ff';
+    ctx.beginPath(); ctx.ellipse(-s * 0.9,  s * 0.1, s * 0.8, s * 0.3,  0.3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( s * 0.9,  s * 0.1, s * 0.8, s * 0.3, -0.3, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, -s * 0.6, s * 0.3, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+// 天敵
+function drawEnemy(e) {
+  const cfg = e.cfg;
+  const px = e.x * CELL, py = e.y * CELL, s = CELL;
+  const es = s * cfg.size;
+  ctx.save(); ctx.translate(px + s / 2, py + s / 2);
+
+  rr(-es / 2, -es / 2, es, es, es * 0.2, cfg.color);
+
+  // 耳朵（狐/狼/熊）
+  if (['fox', 'wolf', 'bear'].includes(e.type)) {
+    ctx.fillStyle = cfg.color;
+    ctx.beginPath(); ctx.moveTo(-es * 0.4, -es / 2); ctx.lineTo(-es * 0.15, -es * 0.8); ctx.lineTo(-es * 0.05, -es / 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo( es * 0.05, -es / 2); ctx.lineTo( es * 0.15, -es * 0.8); ctx.lineTo( es * 0.4, -es / 2); ctx.fill();
+    if (e.type === 'bear') {
+      ctx.fillStyle = '#a06030';
+      ctx.beginPath(); ctx.arc(-es * 0.28, -es * 0.5, es * 0.13, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc( es * 0.28, -es * 0.5, es * 0.13, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // 眼睛
+  ctx.fillStyle = cfg.eyeC;
+  ctx.beginPath(); ctx.arc(-es * 0.2, -es * 0.1, es * 0.13, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc( es * 0.2, -es * 0.1, es * 0.13, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.arc(-es * 0.2, -es * 0.1, es * 0.07, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc( es * 0.2, -es * 0.1, es * 0.07, 0, Math.PI * 2); ctx.fill();
+
+  // 口鼻
+  if (e.type !== 'eagle' && e.type !== 'snake') {
+    rr(-es * 0.15, es * 0.05, es * 0.3, es * 0.18, es * 0.08, '#c0905a');
+    ctx.fillStyle = '#333'; ctx.beginPath(); ctx.arc(0, es * 0.1, es * 0.07, 0, Math.PI * 2); ctx.fill();
+  }
+  if (e.type === 'eagle') {
+    ctx.fillStyle = '#c8a000';
+    ctx.beginPath(); ctx.moveTo(0, es * 0.05); ctx.lineTo(es * 0.22, es * 0.15); ctx.lineTo(0, es * 0.22); ctx.fill();
+  }
+  if (e.type === 'snake') {
+    ctx.fillStyle = '#e03030';
+    ctx.beginPath(); ctx.moveTo(es * 0.28, es * 0.12); ctx.lineTo(es * 0.42, es * 0.06); ctx.lineTo(es * 0.36, es * 0.18); ctx.fill();
+  }
+
+  ctx.restore();
+
+  // 名稱標籤
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.font = `bold ${Math.max(8, CELL * 0.38)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText(cfg.label, px + s / 2, py + s - 1);
+}
+
+// 主繪圖
+function draw(t) {
+  drawBg();
+  // 小雞（身體，從尾到頸）
+  for (let i = hen.length - 1; i >= 1; i--) drawChick(hen[i]);
+  // 母雞（頭）
+  if (hen.length > 0) drawHen(hen[0], dir.x, dir.y);
+  // 蟲
+  worms.forEach(w => drawWorm(w, t));
+  // 天敵
+  enemies.forEach(e => drawEnemy(e));
+}
+
+// ---- UI 輔助 ----
+function setMsg(t) { document.getElementById('msg').textContent = t; }
+
+function updateHUD() {
+  document.getElementById('hLv').textContent   = lv;
+  document.getElementById('hSc').textContent   = score;
+  document.getElementById('hBest').textContent = best;
+  document.getElementById('hLen').textContent  = Math.max(0, hen.length - 1);
+  document.getElementById('hNext').textContent = levelCfg.nextScore;
+
+  // 圖例
+  const leg = document.getElementById('legend');
+  leg.innerHTML = '';
+  levelCfg.enemyTypes.forEach(t => {
+    const cfg = ENEMY_CFG[t];
+    leg.innerHTML += `<div class="leg"><span class="dot" style="background:${cfg.color}"></span>${cfg.label}</div>`;
+  });
+  WORM_TYPES.forEach(w => {
+    leg.innerHTML += `<div class="leg"><span class="dot" style="background:${w.color}"></span>${w.name}(+${w.score}分, 速×${w.speedMult})</div>`;
+  });
+}
+
+// ---- 開始 / 暫停 ----
+function startGame() {
+  if (rafId) cancelAnimationFrame(rafId);
+  initGame(1);
+  running = true; paused = false;
+  setMsg('吃蟲讓小雞長大，躲避天敵！');
+  document.getElementById('sBtn').textContent = '重新開始';
+  document.getElementById('pBtn').disabled    = false;
+  document.getElementById('pBtn').textContent = '暫停';
+  lastT = performance.now(); accumulator = 0;
+  rafId = requestAnimationFrame(gameLoop);
+}
+
+function togglePause() {
+  paused = !paused;
+  document.getElementById('pBtn').textContent = paused ? '繼續' : '暫停';
+  setMsg(paused ? '暫停中...' : '');
+  if (!paused) { lastT = performance.now(); rafId = requestAnimationFrame(gameLoop); }
+}
+
+// ---- 鍵盤 ----
+const KEY_DIR = {
+  ArrowUp:    { x: 0, y: -1 },
+  ArrowDown:  { x: 0, y:  1 },
+  ArrowLeft:  { x: -1, y: 0 },
+  ArrowRight: { x:  1, y: 0 },
+};
+document.addEventListener('keydown', e => {
+  if (KEY_DIR[e.key] && running) {
+    const d = KEY_DIR[e.key];
+    if (d.x !== -dir.x || d.y !== -dir.y) nextDir = d;
+    e.preventDefault();
+  }
+});
+
+// ---- 按鈕綁定 ----
+document.getElementById('sBtn').addEventListener('click', startGame);
+document.getElementById('pBtn').addEventListener('click', togglePause);
+document.getElementById('u').addEventListener('click', () => { if (running && dir.y !== 1)  nextDir = { x: 0,  y: -1 }; });
+document.getElementById('d').addEventListener('click', () => { if (running && dir.y !== -1) nextDir = { x: 0,  y:  1 }; });
+document.getElementById('l').addEventListener('click', () => { if (running && dir.x !== 1)  nextDir = { x: -1, y:  0 }; });
+document.getElementById('r').addEventListener('click', () => { if (running && dir.x !== -1) nextDir = { x:  1, y:  0 }; });
+
+// ---- 初始畫面 ----
+C.width = 15 * 22; C.height = 15 * 22;
+ctx.fillStyle = '#f0ede0'; ctx.fillRect(0, 0, C.width, C.height);
+ctx.fillStyle = '#888'; ctx.font = '16px sans-serif'; ctx.textAlign = 'center';
+ctx.fillText('🐔 按「開始」來玩！', C.width / 2, C.height / 2);
+</script>
+</body>
+</html>
+<!-- 全新升級版完成！以下是遊戲特色說明：
+主角
+
+頭部是母雞（橘棕色、三叢紅冠、紅垂肉、寬扁嘴）
+身體每節都是毛茸茸的黃色小雞
+
+蟲蟲系統（影響速度）
+蟲分數效果紅毛蟲+1正常速度胖蚯蚓+2速度 ×0.75金甲蟲+3速度 ×0.6藍蜻蜓+5速度 ×0.45（最快！）
+天敵（主動追蹤母雞）
+
+第1關：狐狸
+第2關：+ 熊
+第3關：+ 狼
+第4關：+ 老鷹
+第5關：+ 蛇
+
+關卡制度
+共5關，越高關地圖越大、天敵越多、升關分數越高。吃稀有蟲能加速移動，但別被天敵追上！ -->
